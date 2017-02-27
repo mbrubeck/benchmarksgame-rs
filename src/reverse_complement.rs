@@ -140,7 +140,6 @@ fn reverse_complement(seq: &mut [u8], tables: &Tables) {
     let seq = &mut seq[..len];// Drop the last newline
 
     // Move newlines so the reversed text is wrapped correctly.
-    // TODO: Parallelize this part, or combine it with the processing below.
     let off = LINE_LEN - len % (LINE_LEN + 1);
     let mut i = LINE_LEN;
     while i < len {
@@ -209,9 +208,11 @@ fn main() {
     let mut data = Vec::with_capacity(size + 1);
     stdin.read_to_end(&mut data).unwrap();
     let tables = &Tables::new();
-    for seq in mut_dna_seqs(&mut data) {
-        reverse_complement(seq, tables);
-    }
+    crossbeam::scope(|scope| for seq in mut_dna_seqs(&mut data) {
+        scope.spawn(move || {
+            reverse_complement(seq, tables);
+        });
+    });
     let stdout = io::stdout();
     stdout.lock().write_all(&data).unwrap();
 }
