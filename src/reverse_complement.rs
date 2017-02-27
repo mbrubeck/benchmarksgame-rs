@@ -131,24 +131,35 @@ impl<'a, T> Iterator for DoubleChunk<'a, T> {
     }
 }
 
-/// Length of a normal line without the terminating \n.
-const LINE_LEN: usize = 60;
+/// Length of a normal line including the terminating \n.
+const LINE_LEN: usize = 61;
 
 /// Compute the reverse complement.
 fn reverse_complement(seq: &mut [u8], tables: &Tables) {
     let len = seq.len() - 1;
     let seq = &mut seq[..len];// Drop the last newline
 
+    let thread_count = num_cpus::get();
+
     // Move newlines so the reversed text is wrapped correctly.
-    let off = LINE_LEN - len % (LINE_LEN + 1);
-    let mut i = LINE_LEN;
-    while i < len {
-        unsafe {
-            ptr::copy(seq.as_ptr().offset((i - off) as isize),
-                      seq.as_mut_ptr().offset((i - off + 1) as isize), off);
-            *seq.get_unchecked_mut(i - off) = b'\n';
-        }
-        i += LINE_LEN + 1;
+    let off = len % LINE_LEN;
+    let line_count = len / LINE_LEN;
+    let lines_per_thread = (line_count + thread_count - 1) / thread_count;
+    let chunk_size = lines_per_thread * LINE_LEN;
+
+    if off > 0 {
+        crossbeam::scope(|scope| {
+            for chunk in seq.chunks_mut(chunk_size) {
+                scope.spawn(move || for line in chunk.chunks_mut(LINE_LEN) {
+                    if line.len() < LINE_LEN { return }
+                    unsafe {
+                        ptr::copy(line.as_ptr().offset(off as isize),
+                                  line.as_mut_ptr().offset(off as isize + 1), LINE_LEN - off - 1);
+                        *line.get_unchecked_mut(off) = b'\n';
+                    }
+                });
+            }
+        });
     }
 
     let div = len / 4;
@@ -160,7 +171,6 @@ fn reverse_complement(seq: &mut [u8], tables: &Tables) {
         let q = p.offset((div * 2 + rem) as isize);
         let ys = slice::from_raw_parts_mut(q as *mut u16, div);
 
-        let thread_count = num_cpus::get();
         let chunk_size = (div + thread_count - 1) / thread_count;
         crossbeam::scope(|scope| {
             for (a, b) in double_chunk(chunk_size, xs, ys) {
@@ -208,11 +218,9 @@ fn main() {
     let mut data = Vec::with_capacity(size + 1);
     stdin.read_to_end(&mut data).unwrap();
     let tables = &Tables::new();
-    crossbeam::scope(|scope| for seq in mut_dna_seqs(&mut data) {
-        scope.spawn(move || {
-            reverse_complement(seq, tables);
-        });
-    });
+    for seq in mut_dna_seqs(&mut data) {
+        reverse_complement(seq, tables);
+    }
     let stdout = io::stdout();
     stdout.lock().write_all(&data).unwrap();
 }
