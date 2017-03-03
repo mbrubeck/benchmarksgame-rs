@@ -10,7 +10,7 @@ extern crate rayon;
 extern crate memchr;
 
 use std::io::{Read, Write};
-use std::{io, ptr, slice};
+use std::{cmp, io, mem, slice};
 use std::fs::File;
 
 struct Tables {
@@ -65,78 +65,112 @@ impl Tables {
     }
 }
 
-/// Length of a normal line without the terminating \n.
-const LINE_LEN: usize = 60;
-const SEQUENTIAL_SIZE: usize = 1024;
-
-/// Compute the reverse complement with the sequence split into two equal-sized slices.
-fn reverse_complement_left_right(left: &mut [u16], right: &mut [u16], tables: &Tables) {
-    let len = left.len();
-    if len <= SEQUENTIAL_SIZE {
-        assert_eq!(right.len(), len);
-        for (left, right) in left.iter_mut().zip(right.iter_mut().rev()) {
-            let tmp = tables.cpl16(*left);
-            *left = tables.cpl16(*right);
-            *right = tmp;
-        }
-    } else {
-        let (left1, left2) = left.split_at_mut((len + 1) / 2);
-        let (right2, right1) = right.split_at_mut(len / 2);
-        rayon::join(|| reverse_complement_left_right(left1, right1, tables),
-                    || reverse_complement_left_right(left2, right2, tables));
+trait SliceUtils<'a> {
+    fn as_u16_slice(self) -> &'a mut [u16];
+    fn split_off_left(&mut self, n: usize) -> Self;
+    fn split_off_right(&mut self, n: usize) -> Self;
+}
+impl<'a> SliceUtils<'a> for &'a mut [u8] {
+    fn as_u16_slice(self) -> &'a mut [u16] {
+        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr() as *mut u16, self.len() / 2) }
+    }
+    /// Split the left `n` items from self and return them as a separate slice.
+    fn split_off_left(&mut self, n: usize) -> Self {
+        let n = cmp::min(self.len(), n);
+        let data = mem::replace(self, &mut []);
+        let (left, data) = data.split_at_mut(n);
+        *self = data;
+        left
+    }
+    /// Split the right `n` items from self and return them as a separate slice.
+    fn split_off_right(&mut self, n: usize) -> Self {
+        let len = self.len();
+        let n = cmp::min(len, n);
+        let data = mem::replace(self, &mut []);
+        let (data, right) = data.split_at_mut(len - n);
+        *self = data;
+        right
     }
 }
 
-/// Split a byte slice into two u16-halves with any remainder left in the middle.
-fn split_mut_middle_as_u16<'a>(seq: &'a mut [u8]) -> (&'a mut [u16], &'a mut [u8], &'a mut [u16]) {
-    let len = seq.len();
-    let div = len / 4;
-    let rem = len % 4;
-    unsafe {
-        let left_ptr = seq.as_mut_ptr();
-        // This is slow if len % 2 != 0 but still faster than bytewise operations.
-        let right_ptr = left_ptr.offset((div * 2 + rem) as isize);
-        (slice::from_raw_parts_mut(left_ptr as *mut u16, div),
-        slice::from_raw_parts_mut(left_ptr.offset((div * 2) as isize), rem),
-        slice::from_raw_parts_mut(right_ptr as *mut u16, div))
+/// Length of a normal line including the terminating \n.
+const LINE_LEN: usize = 61;
+const SEQUENTIAL_SIZE: usize = 2048;
+
+/// Compute the reverse complement for two contiguous chunks without line breaks.
+fn reverse_complement_chunk(mut left: &mut [u8], mut right: &mut [u8], tables: &Tables) {
+    // Convert to [u16] to  two bytes at a time.
+    let u16_len = (left.len() / 2) * 2;
+    let left16 = left.split_off_left(u16_len).as_u16_slice();
+    let right16 = right.split_off_right(u16_len).as_u16_slice();
+    for (x, y) in left16.iter_mut().zip(right16.iter_mut().rev()) {
+        let tmp = tables.cpl16(*x);
+        *x = tables.cpl16(*y);
+        *y = tmp;
+    }
+
+    // If there were an odd number of bytes per slice, handle the remaining single bytes.
+    if let (Some(x), Some(y)) = (left.first_mut(), right.first_mut()) {
+        let tmp = tables.cpl8(*x);
+        *x = tables.cpl8(*y);
+        *y = tmp;
+    }
+}
+
+/// Compute the reverse complement on chunks from opposite ends of the sequence.
+///
+/// `left` must start at the beginning of a line.
+fn reverse_complement_left_right(mut left: &mut [u8], mut right: &mut [u8], trailing_len: usize, tables: &Tables) {
+    let len = left.len();
+    if len <= SEQUENTIAL_SIZE {
+        while left.len() > 0  || right.len() > 0 {
+            // Process the chunk up to the newline in `right`.
+            let mut a = left.split_off_left(trailing_len);
+            let mut b = right.split_off_right(trailing_len);
+
+            // If there is an odd number of bytes, the extra one will be on the right.
+            if b.len() > a.len() {
+                let mid = b.split_off_left(1);
+                mid[0] = tables.cpl8(mid[0])
+            }
+            reverse_complement_chunk(a, b, tables);
+
+            // Skip the newline in `right`.
+            right.split_off_right(1);
+
+            // Process the chunk up to the newline in `left`.
+            let leading_len = LINE_LEN - 1 - trailing_len;
+            a = left.split_off_left(leading_len);
+            b = right.split_off_right(leading_len);
+
+            // If there is an odd number of bytes, the extra one will be on the left.
+            if a.len() > b.len() {
+                let mid = a.split_off_right(1);
+                mid[0] = tables.cpl8(mid[0])
+            }
+            reverse_complement_chunk(a, b, tables);
+
+            // Skip the newline in `left`.
+            left.split_off_left(1);
+        }
+    } else {
+        let line_count = (len + LINE_LEN - 1) / LINE_LEN;
+        let mid = line_count / 2 * LINE_LEN; // Split on a whole number of lines.
+
+        let left1 = left.split_off_left(mid);
+        let right1 = right.split_off_right(mid);
+        rayon::join(|| reverse_complement_left_right(left,  right,  trailing_len, tables),
+                    || reverse_complement_left_right(left1, right1, trailing_len, tables));
     }
 }
 
 /// Compute the reverse complement.
 fn reverse_complement(seq: &mut [u8], tables: &Tables) {
     let len = seq.len() - 1;
-    let seq = &mut seq[..len];// Drop the last newline
-
-    // Move newlines so the reversed text is wrapped correctly.
-    let off = LINE_LEN - len % (LINE_LEN + 1);
-    let mut i = LINE_LEN;
-    while i < len {
-        unsafe {
-            ptr::copy(seq.as_ptr().offset((i - off) as isize),
-                      seq.as_mut_ptr().offset((i - off + 1) as isize), off);
-            *seq.get_unchecked_mut(i - off) = b'\n';
-        }
-        i += LINE_LEN + 1;
-    }
-    let (left, middle, right) = split_mut_middle_as_u16(seq);
-    reverse_complement_left_right(left, right, tables);
-
-    match middle.len() {
-        0 => {}
-        1 => middle[0] = tables.cpl8(middle[0]),
-        2 => {
-            let tmp = tables.cpl8(middle[0]);
-            middle[0] = tables.cpl8(middle[1]);
-            middle[1] = tmp;
-        },
-        3 => {
-            middle[1] = tables.cpl8(middle[1]);
-            let tmp = tables.cpl8(middle[0]);
-            middle[0] = tables.cpl8(middle[2]);
-            middle[2] = tmp;
-        },
-        _ => unreachable!()
-    }
+    let seq = &mut seq[..len]; // Drop the last newline
+    let trailing_len = len % LINE_LEN;
+    let (left, right) = seq.split_at_mut(len / 2);
+    reverse_complement_left_right(left, right, trailing_len, tables);
 }
 
 fn file_size(f: &mut File) -> io::Result<usize> {
