@@ -13,6 +13,9 @@ use std::{cmp, io};
 use std::fs::File;
 use std::mem::replace;
 
+/// This controls the size of reads from the input. Chosen to match the C entry.
+const READ_SIZE: usize = 16 * 1024;
+
 /// Lookup table to find the complement of a single FASTA code.
 fn build_table() -> [u8; 256] {
     let mut table = [0; 256];
@@ -70,7 +73,7 @@ const LINE_LEN: usize = 61;
 const SEQUENTIAL_SIZE: usize = 2048;
 
 /// Compute the reverse complement for two contiguous chunks without line breaks.
-fn reverse_complement_chunk(left: &mut [u8], right: &mut [u8], table: &[u8; 256]) {
+fn reverse_chunks(left: &mut [u8], right: &mut [u8], table: &[u8; 256]) {
     for (x, y) in left.iter_mut().zip(right.iter_mut().rev()) {
         *y = table[replace(x, table[*y as usize]) as usize];
     }
@@ -102,7 +105,7 @@ fn reverse_complement_left_right(mut left: &mut [u8],
                 mid[0] = table[mid[0] as usize];
             }
 
-            reverse_complement_chunk(a, b, table);
+            reverse_chunks(a, b, table);
 
             // Get the chunk up to the newline in `left`.
             let n = LINE_LEN - 1 - trailing_len;
@@ -117,7 +120,7 @@ fn reverse_complement_left_right(mut left: &mut [u8],
                 mid[0] = table[mid[0] as usize]
             }
 
-            reverse_complement_chunk(a, b, table);
+            reverse_chunks(a, b, table);
         }
     } else {
         let line_count = len / LINE_LEN;
@@ -149,30 +152,27 @@ fn split_and_reverse<R>(mut stdin: R,
     // Reserve capacity to avoid reallocating.
     buf.reserve(input_size);
 
-    // Read the header line if it's not already read.
-    if buf.is_empty() {
-        stdin.read_until(b'\n', &mut buf)?;
-    }
+    // Read the header line.
+    stdin.read_until(b'\n', &mut buf)?;
 
-    // Read lines of input until EOF or start of the next sequence.
-    let mut i = buf.len();
-    let seq_start = i;
-    while stdin.read_until(b'\n', &mut buf)? > 0 {
-        if buf[i] == b'>' {
-            // Found the start of a new sequence. Fork one task to reversing
-            // the old sequence, and a second task to read in the new sequence.
-            let new_buf = buf.split_off(i);
-            let new_size = input_size.saturating_sub(buf.len());
+    // Read the sequence body
+    let seq_start = buf.len();
+    stdin.read_until(b'>', &mut buf)?;
 
-            let (_, seqs) = rayon::join(
-                || reverse_complement(&mut buf[seq_start..], table),
-                || split_and_reverse(stdin, new_buf, new_size, table));
+    let i = buf.len() - 1;
+    if buf[i] == b'>' {
+        // Found the start of a new sequence. Fork one task to reversing
+        // the old sequence, and a second task to read in the new sequence.
+        let new_buf = buf.split_off(i);
+        let new_size = input_size.saturating_sub(buf.len());
 
-            let mut result = vec![buf];
-            result.append(&mut seqs?);
-            return Ok(result)
-        }
-        i = buf.len();
+        let (_, seqs) = rayon::join(
+            || reverse_complement(&mut buf[seq_start..], table),
+            || split_and_reverse(stdin, new_buf, new_size, table));
+
+        let mut result = vec![buf];
+        result.append(&mut seqs?);
+        return Ok(result)
     }
 
     // End of file reached.
@@ -186,7 +186,7 @@ fn split_and_reverse<R>(mut stdin: R,
 fn run() -> io::Result<()> {
     let stdin = File::open("/dev/stdin")?;
     let size = stdin.metadata()?.len() as usize;
-    let reader = BufReader::with_capacity(64 * 1024, stdin);
+    let reader = BufReader::with_capacity(READ_SIZE, stdin);
 
     for seq in split_and_reverse(reader, vec![], size, &build_table())? {
         io::stdout().write_all(&seq)?;
