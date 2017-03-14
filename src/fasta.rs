@@ -106,10 +106,8 @@ fn main() {
         .and_then(|n| n.parse().ok())
         .unwrap_or(1000);
 
-    let (tx0, rx0) = channel::<Vec<u8>>();
-    let (tx1, rx1) = channel::<Vec<u8>>();
-
     // Generate a DNA sequence by copying from the given sequence.
+    let (tx0, rx0) = channel::<Vec<u8>>();
     thread::spawn(move || {
         let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
                            GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
@@ -127,6 +125,7 @@ fn main() {
     });
 
     // Generate DNA sequences by weighted random selection from two alphabets.
+    let (tx1, rx1) = channel::<Vec<u8>>();
     thread::spawn(move || {
         let mut rng = MyRandom::new();
         let iub = cumulative_probabilities(
@@ -147,10 +146,18 @@ fn main() {
                    |block| rng.gen(&homosapiens, block));
     });
 
-    // Output blocks from the first thread, then the second one, as they are completed.
+    // Perform line wrapping on a separate thread.
+    let (tx2, rx2) = channel::<Vec<u8>>();
+    thread::spawn(move || {
+        for mut block in rx0.into_iter().chain(rx1) {
+            format(&mut block);
+            tx2.send(block).unwrap();
+        }
+    });
+
+    // Output blocks after line-wrapping.
     let mut output = BufWriter::new(io::stdout());
-    for mut block in rx0.into_iter().chain(rx1) {
-        format(&mut block);
+    for block in rx2 {
         output.write_all(&block).unwrap();
     }
 }
