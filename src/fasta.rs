@@ -98,47 +98,47 @@ fn main() {
         .and_then(|n| n.parse().ok())
         .unwrap_or(1000);
 
-    let (tx, rx) = channel::<Vec<u8>>();
+    let (tx0, rx0) = channel::<Vec<u8>>();
+    let (tx1, rx1) = channel::<Vec<u8>>();
 
-    let output_thread = thread::spawn(move || {
-        let mut output = BufWriter::new(io::stdout());
-        while let Ok(block) = rx.recv() {
-            write(&block, &mut output).unwrap();
-        }
+    thread::spawn(move || {
+        let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
+                           GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
+                           GAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
+                           AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTG\
+                           TAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCT\
+                           TGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
+                           CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCT\
+                           CAAAAA";
+        let mut it = alu.iter().cloned().cycle();
+
+        make_fasta(">ONE Homo sapiens alu", &tx0, n * 2, |buf| for i in buf {
+            *i = it.next().unwrap()
+        });
     });
 
-    let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
-                       GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
-                       GAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
-                       AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTG\
-                       TAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCT\
-                       TGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
-                       CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCT\
-                       CAAAAA";
-    let mut it = alu.iter().cloned().cycle();
+    thread::spawn(move || {
+        let iub = &[('a', 0.27), ('c', 0.12), ('g', 0.12),
+                    ('t', 0.27), ('B', 0.02), ('D', 0.02),
+                    ('H', 0.02), ('K', 0.02), ('M', 0.02),
+                    ('N', 0.02), ('R', 0.02), ('S', 0.02),
+                    ('V', 0.02), ('W', 0.02), ('Y', 0.02)];
 
-    make_fasta(">ONE Homo sapiens alu", &tx, n * 2, |buf| for i in buf {
-        *i = it.next().unwrap()
+        let homosapiens = &[('a', 0.3029549426680),
+                            ('c', 0.1979883004921),
+                            ('g', 0.1975473066391),
+                            ('t', 0.3015094502008)];
+
+        let mut rng = MyRandom::new();
+        let data = make_random(iub);
+        make_fasta(">TWO IUB ambiguity codes", &tx1, n * 3, |buf| rng.gen(&data, buf));
+
+        let data = make_random(homosapiens);
+        make_fasta(">THREE Homo sapiens frequency", &tx1, n * 5, |buf| rng.gen(&data, buf));
     });
 
-    let iub = &[('a', 0.27), ('c', 0.12), ('g', 0.12),
-                ('t', 0.27), ('B', 0.02), ('D', 0.02),
-                ('H', 0.02), ('K', 0.02), ('M', 0.02),
-                ('N', 0.02), ('R', 0.02), ('S', 0.02),
-                ('V', 0.02), ('W', 0.02), ('Y', 0.02)];
-
-    let homosapiens = &[('a', 0.3029549426680),
-                        ('c', 0.1979883004921),
-                        ('g', 0.1975473066391),
-                        ('t', 0.3015094502008)];
-
-    let mut rng = MyRandom::new();
-    let data = make_random(iub);
-    make_fasta(">TWO IUB ambiguity codes", &tx, n * 3, |buf| rng.gen(&data, buf));
-
-    let data = make_random(homosapiens);
-    make_fasta(">THREE Homo sapiens frequency", &tx, n * 5, |buf| rng.gen(&data, buf));
-
-    drop(tx);
-    output_thread.join().unwrap();
+    let mut output = BufWriter::new(io::stdout());
+    for block in rx0.into_iter().chain(rx1) {
+        write(&block, &mut output).unwrap();
+    }
 }
