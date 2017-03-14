@@ -4,35 +4,33 @@
 // contributed by the Rust Project Developers
 // contributed by TeXitoi
 // multi-threaded version contributed by Alisdair Owens
-extern crate num_cpus;
 
-use std::cmp::min;
 use std::io;
-use std::io::{Write, BufWriter, ErrorKind};
-use std::sync::{Mutex,Arc};
-use std::thread;
+use std::io::{Write, BufWriter};
 
 const LINE_LENGTH: usize = 60;
 const IM: u32 = 139968;
-const LINES: usize = 1024;
-const BLKLEN: usize = LINE_LENGTH * LINES;
 
-/*
-struct MyRandom { last: u32 }
+struct MyRandom(u32);
 
 impl MyRandom {
-    fn new() -> MyRandom { MyRandom { last: 42 } }
+    fn new() -> Self { MyRandom(42) }
 
-    fn gen(&mut self, buf: &mut [u32]) {
+    fn gen(&mut self, data: &[(u32, u8)], buf: &mut [u8]) {
         for i in buf.iter_mut() {
-            self.last = (self.last * 3877 + 29573) % IM;
-            *i = self.last;
+            self.0 = (self.0 * 3877 + 29573) % IM;
+            for j in data {
+                if j.0 >= self.0 {
+                    *i = j.1;
+                    break;
+                }
+            }
         }
     }
 }
 
 fn normalize(p: f32) -> u32 {
-    (acc * IM as f32).floor() as u32
+    (p * IM as f32).floor() as u32
 }
 
 fn make_random(data: &[(char, f32)]) -> Vec<(u32, u8)> {
@@ -43,95 +41,63 @@ fn make_random(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     })
     .collect()
 }
-*/
 
-fn make_fasta2<I: Iterator<Item=u8>>(header: &str, mut it: I, n: usize)
-    -> io::Result<()>
-{
-    let mut sysout = BufWriter::new(io::stdout());
-    try!(sysout.write_all(header.as_bytes()));
+fn make_fasta2<W: Write, I: Iterator<Item=u8>>(
+    header: &str,
+    output: &mut W,
+    mut it: I,
+    n: usize
+) -> io::Result<()> {
+    output.write_all(header.as_bytes())?;
 
     let mut line = [0u8; LINE_LENGTH + 1];
 
     // Write whole lines.
     line[LINE_LENGTH] = b'\n';
-    let num_lines = n / (LINE_LENGTH + 1);
+    let num_lines = n / LINE_LENGTH;
     for _ in 0..num_lines {
         for i in &mut line[..LINE_LENGTH] {
             *i = it.next().unwrap();
         }
-        sysout.write_all(&line)?;
+        output.write_all(&line)?;
     }
 
     // Write trailing line.
-    let trailing_len = n % (LINE_LENGTH + 1);
+    let trailing_len = n % LINE_LENGTH;
     for i in &mut line[..trailing_len] {
         *i = it.next().unwrap();
     }
     line[trailing_len] = b'\n';
-    sysout.write_all(&line[..(trailing_len+1)])
+    output.write_all(&line[..(trailing_len+1)])
 }
 
-/*
-fn do_fasta(thread_num: u16, rng: Arc<Mutex<MyRandom>>,
-            wr: Arc<Mutex<MyStdOut>>, data: Vec<(u32, u8)>) {
-    let mut rng_buf = [0u32; BLKLEN];
-    let mut out_buf = [0u8; BLKLEN + LINES];
-    let mut count;
-    loop {
-        loop {
-            if let Ok(x) = rng.lock().unwrap().gen(&mut rng_buf, thread_num) {
-                count = x;
-                break;
-            }
-        };
+fn make_fasta<W: Write>(
+    header: &str,
+    output: &mut W,
+    n: usize,
+    rng: &mut MyRandom,
+    data: &[(u32, u8)],
+) -> io::Result<()> {
+    output.write_all(header.as_bytes())?;
+    let mut line = [0; LINE_LENGTH + 1];
 
-        if count == 0 {
-            break;
-        }
-        let mut line_count = 0;
-        for i in 0..count {
-            if i % LINE_LENGTH == 0 && i > 0 {
-                out_buf[i+line_count] = b'\n';
-                line_count += 1;
-            }
-            let rn = rng_buf[i];
-            for j in &data {
-                if j.0 >= rn {
-                    out_buf[i+line_count] = j.1;
-                    break;
-                }
-            }
-        }
-        out_buf[count+line_count] = b'\n';
-
-        while let Err(_) = wr.lock()
-                .unwrap()
-                .write(&out_buf[..(count+line_count+1)], thread_num) {};
+    // Write whole lines.
+    line[LINE_LENGTH] = b'\n';
+    let num_lines = n / LINE_LENGTH;
+    for _ in 0..num_lines {
+        rng.gen(data, &mut line[..LINE_LENGTH]);
+        output.write_all(&line)?;
     }
-}
 
-fn make_fasta(header: &str, count: usize, rng: Arc<Mutex<MyRandom>>,
-                 data: Vec<(u32, u8)>, num_threads: u16
-             ) -> io::Result<()> {
-
-    let stdout = Arc::new(Mutex::new(MyStdOut::new(num_threads)));
-    try!(io::stdout().write_all(header.as_bytes()));
-    let mut threads = Vec::new();
-    for thread in 0..num_threads {
-        let d = data.clone();
-        let rng_clone = rng.clone();
-        let stdout_clone = stdout.clone();
-        threads.push(thread::spawn(move || {
-            do_fasta(thread, rng_clone, stdout_clone, d);
-        }));
-    }
-    for thread_guard in threads {
-        thread_guard.join().unwrap();
+    // Write trailing line.
+    let trailing_len = n % LINE_LENGTH;
+    if trailing_len > 0 {
+        line[trailing_len] = b'\n';
+        rng.gen(data, &mut line[..trailing_len]);
+        output.write_all(&line[..(trailing_len+1)])?;
     }
     Ok(())
 }
-*/
 
 fn main() {
     let n = std::env::args_os().nth(1)
@@ -139,7 +105,7 @@ fn main() {
         .and_then(|n| n.parse().ok())
         .unwrap_or(1000);
 
-    let num_threads: u16 = num_cpus::get() as u16;
+    let mut output = BufWriter::new(io::stdout());
 
     let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
                        GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
@@ -149,6 +115,9 @@ fn main() {
                        TGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
                        CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCT\
                        CAAAAA";
+
+    make_fasta2(">ONE Homo sapiens alu\n", &mut output,
+                    alu.iter().cloned().cycle(), n * 2).unwrap();
 
     let iub = &[('a', 0.27), ('c', 0.12), ('g', 0.12),
                 ('t', 0.27), ('B', 0.02), ('D', 0.02),
@@ -161,17 +130,11 @@ fn main() {
                         ('g', 0.1975473066391),
                         ('t', 0.3015094502008)];
 
-    make_fasta2(">ONE Homo sapiens alu\n",
-                    alu.iter().cycle().map(|c| *c), n * 2).unwrap();
-    /*
-    let rng = Arc::new(Mutex::new(MyRandom::new(n*3, num_threads)));
+    let mut rng = MyRandom::new();
 
-    make_fasta(">TWO IUB ambiguity codes\n", n * 3,
-                    rng.clone(), make_random(iub), num_threads).unwrap();
+    make_fasta(">TWO IUB ambiguity codes\n", &mut output, n * 3,
+                    &mut rng, &make_random(iub)).unwrap();
 
-    make_fasta(">THREE Homo sapiens frequency\n", n * 5,
-                    rng, make_random(homosapiens), num_threads).unwrap();
-    */
-
-    io::stdout().flush().unwrap();
+    make_fasta(">THREE Homo sapiens frequency\n", &mut output, n * 5,
+                    &mut rng, &make_random(homosapiens)).unwrap();
 }
