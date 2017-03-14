@@ -19,10 +19,10 @@ struct MyRandom(u32);
 impl MyRandom {
     fn new() -> Self { MyRandom(42) }
 
-    fn gen(&mut self, data: &[(u32, u8)], buf: &mut [u8]) {
+    fn gen(&mut self, probabilities: &[(u32, u8)], buf: &mut [u8]) {
         for i in buf.iter_mut() {
             self.0 = (self.0 * 3877 + 29573) % IM;
-            *i = data.iter().find(|&&(p, _)| p >= self.0).unwrap().1;
+            *i = probabilities.iter().find(|&&(p, _)| p >= self.0).unwrap().1;
         }
     }
 }
@@ -31,7 +31,7 @@ fn normalize(p: f32) -> u32 {
     (p * IM as f32).floor() as u32
 }
 
-fn make_random(data: &[(char, f32)]) -> Vec<(u32, u8)> {
+fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     let mut acc = 0.;
     data.iter().map(|&(ch, p)| {
         acc += p;
@@ -125,11 +125,11 @@ fn main() {
                             ('t', 0.3015094502008)];
 
         let mut rng = MyRandom::new();
-        let data = make_random(iub);
-        make_fasta(">TWO IUB ambiguity codes", &tx1, n * 3, |buf| rng.gen(&data, buf));
+        let ps = cumulative_probabilities(iub);
+        make_fasta(">TWO IUB ambiguity codes", &tx1, n * 3, |buf| rng.gen(&ps, buf));
 
-        let data = make_random(homosapiens);
-        make_fasta(">THREE Homo sapiens frequency", &tx1, n * 5, |buf| rng.gen(&data, buf));
+        let ps = cumulative_probabilities(homosapiens);
+        make_fasta(">THREE Homo sapiens frequency", &tx1, n * 5, |buf| rng.gen(&ps, buf));
     });
 
     let mut output = BufWriter::new(io::stdout());
