@@ -17,88 +17,33 @@ const IM: u32 = 139968;
 const LINES: usize = 1024;
 const BLKLEN: usize = LINE_LENGTH * LINES;
 
-struct MyStdOut {
-    thread_count: u16,
-    next_thread_num: u16,
-    stdout: io::Stdout,
-}
-
-struct MyRandom {
-    last: u32,
-    count: usize,
-    thread_count: u16,
-    next_thread_num: u16,
-}
+/*
+struct MyRandom { last: u32 }
 
 impl MyRandom {
-    fn new(count: usize, thread_count: u16) -> MyRandom {
-        MyRandom {
-            last: 42,
-            count: count,
-            thread_count: thread_count,
-            next_thread_num: 0
-        }
-    }
+    fn new() -> MyRandom { MyRandom { last: 42 } }
 
-    fn normalize(p: f32) -> u32 {(p * IM as f32).floor() as u32}
-
-    fn reset(&mut self, count: usize) {
-        self.next_thread_num = 0;
-        self.count = count;
-    }
-
-    fn gen(&mut self, buf: &mut [u32], cur_thread: u16) -> Result<usize,()> {
-
-        if self.next_thread_num != cur_thread {
-            return Err(())
-        }
-
-        self.next_thread_num+=1;
-        if self.next_thread_num == self.thread_count {
-            self.next_thread_num = 0;
-        }
-
-        let to_gen = min(buf.len(), self.count);
-        for i in 0..to_gen {
+    fn gen(&mut self, buf: &mut [u32]) {
+        for i in buf.iter_mut() {
             self.last = (self.last * 3877 + 29573) % IM;
-            buf[i] = self.last;
+            *i = self.last;
         }
-        self.count -= to_gen;
-        Ok(to_gen)
     }
 }
 
-impl MyStdOut {
-    fn new(thread_count: u16) -> MyStdOut {
-        MyStdOut {
-            thread_count: thread_count,
-            next_thread_num: 0,
-            stdout: io::stdout()
-        }
-    }
-    fn write(&mut self, data: &[u8], cur_thread: u16) -> io::Result<()> {
-        if self.next_thread_num != cur_thread {
-            return Err(io::Error::new(ErrorKind::Other, ""));
-        }
-
-        self.next_thread_num+=1;
-        if self.next_thread_num == self.thread_count {
-            self.next_thread_num = 0;
-        }
-
-        self.stdout.write_all(data)
-    }
+fn normalize(p: f32) -> u32 {
+    (acc * IM as f32).floor() as u32
 }
 
 fn make_random(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     let mut acc = 0.;
-    data.iter()
-        .map(|&(ch, p)| {
-            acc += p;
-            (MyRandom::normalize(acc), ch as u8)
-        })
-        .collect()
+    data.iter().map(|&(ch, p)| {
+        acc += p;
+        (normalize(acc), ch as u8)
+    })
+    .collect()
 }
+*/
 
 fn make_fasta2<I: Iterator<Item=u8>>(header: &str, mut it: I, mut n: usize)
     -> io::Result<()> {
@@ -117,6 +62,7 @@ fn make_fasta2<I: Iterator<Item=u8>>(header: &str, mut it: I, mut n: usize)
     Ok(())
 }
 
+/*
 fn do_fasta(thread_num: u16, rng: Arc<Mutex<MyRandom>>,
             wr: Arc<Mutex<MyStdOut>>, data: Vec<(u32, u8)>) {
     let mut rng_buf = [0u32; BLKLEN];
@@ -155,7 +101,7 @@ fn do_fasta(thread_num: u16, rng: Arc<Mutex<MyRandom>>,
     }
 }
 
-fn make_fasta(header: &str, rng: Arc<Mutex<MyRandom>>,
+fn make_fasta(header: &str, count: usize, rng: Arc<Mutex<MyRandom>>,
                  data: Vec<(u32, u8)>, num_threads: u16
              ) -> io::Result<()> {
 
@@ -175,6 +121,7 @@ fn make_fasta(header: &str, rng: Arc<Mutex<MyRandom>>,
     }
     Ok(())
 }
+*/
 
 fn main() {
     let n = std::env::args_os().nth(1)
@@ -184,7 +131,6 @@ fn main() {
 
     let num_threads: u16 = num_cpus::get() as u16;
 
-    let rng = Arc::new(Mutex::new(MyRandom::new(n*3, num_threads)));
     let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
                        GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
                        GAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
@@ -207,13 +153,15 @@ fn main() {
 
     make_fasta2(">ONE Homo sapiens alu\n",
                     alu.iter().cycle().map(|c| *c), n * 2).unwrap();
-    make_fasta(">TWO IUB ambiguity codes\n",
+    /*
+    let rng = Arc::new(Mutex::new(MyRandom::new(n*3, num_threads)));
+
+    make_fasta(">TWO IUB ambiguity codes\n", n * 3,
                     rng.clone(), make_random(iub), num_threads).unwrap();
 
-    rng.lock().unwrap().reset(n*5);
-
-    make_fasta(">THREE Homo sapiens frequency\n",
+    make_fasta(">THREE Homo sapiens frequency\n", n * 5,
                     rng, make_random(homosapiens), num_threads).unwrap();
+    */
 
     io::stdout().flush().unwrap();
 }
