@@ -22,12 +22,7 @@ impl MyRandom {
     fn gen(&mut self, data: &[(u32, u8)], buf: &mut [u8]) {
         for i in buf.iter_mut() {
             self.0 = (self.0 * 3877 + 29573) % IM;
-            for j in data {
-                if j.0 >= self.0 {
-                    *i = j.1;
-                    break;
-                }
-            }
+            *i = data.iter().find(|&&(p, _)| p >= self.0).unwrap().1;
         }
     }
 }
