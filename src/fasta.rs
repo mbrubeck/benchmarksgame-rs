@@ -45,11 +45,10 @@ fn make_random(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     .collect()
 }
 
-fn make_fasta2<I: Iterator<Item=u8>>(
-    header: &str,
-    out_thread: &Sender<Vec<u8>>,
-    mut it: I,
-    n: usize)
+fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
+                                   out_thread: &Sender<Vec<u8>>,
+                                   n: usize,
+                                   mut gen: F)
 {
     out_thread.send(header.to_string().into_bytes()).unwrap();
 
@@ -57,9 +56,7 @@ fn make_fasta2<I: Iterator<Item=u8>>(
     let num_blocks = n / BLOCK_SIZE;
     for _ in 0..num_blocks {
         let mut buf = vec![0; BLOCK_SIZE];
-        for i in &mut buf {
-            *i = it.next().unwrap();
-        }
+        gen(&mut buf);
         out_thread.send(buf).unwrap();
     }
 
@@ -67,35 +64,7 @@ fn make_fasta2<I: Iterator<Item=u8>>(
     let trailing_len = n % BLOCK_SIZE;
     if trailing_len > 0 {
         let mut buf = vec![0; trailing_len];
-        for i in &mut buf {
-            *i = it.next().unwrap();
-        }
-        out_thread.send(buf).unwrap();
-    }
-}
-
-fn make_fasta(
-    header: &str,
-    out_thread: &Sender<Vec<u8>>,
-    n: usize,
-    rng: &mut MyRandom,
-    data: &[(u32, u8)])
-{
-    out_thread.send(header.to_string().into_bytes()).unwrap();
-
-    // Write whole blocks.
-    let num_blocks = n / BLOCK_SIZE;
-    for _ in 0..num_blocks {
-        let mut buf = vec![0; BLOCK_SIZE];
-        rng.gen(data, &mut buf);
-        out_thread.send(buf).unwrap();
-    }
-
-    // Write trailing block.
-    let trailing_len = n % BLOCK_SIZE;
-    if trailing_len > 0 {
-        let mut buf = vec![0; trailing_len];
-        rng.gen(data, &mut buf);
+        gen(&mut buf);
         out_thread.send(buf).unwrap();
     }
 }
@@ -146,9 +115,11 @@ fn main() {
                        TGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
                        CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCT\
                        CAAAAA";
+    let mut it = alu.iter().cloned().cycle();
 
-    make_fasta2(">ONE Homo sapiens alu", &tx,
-                    alu.iter().cloned().cycle(), n * 2);
+    make_fasta(">ONE Homo sapiens alu", &tx, n * 2, |buf| for i in buf {
+        *i = it.next().unwrap()
+    });
 
     let iub = &[('a', 0.27), ('c', 0.12), ('g', 0.12),
                 ('t', 0.27), ('B', 0.02), ('D', 0.02),
@@ -162,13 +133,12 @@ fn main() {
                         ('t', 0.3015094502008)];
 
     let mut rng = MyRandom::new();
+    let data = make_random(iub);
+    make_fasta(">TWO IUB ambiguity codes", &tx, n * 3, |buf| rng.gen(&data, buf));
 
-    make_fasta(">TWO IUB ambiguity codes", &tx, n * 3,
-                    &mut rng, &make_random(iub));
+    let data = make_random(homosapiens);
+    make_fasta(">THREE Homo sapiens frequency", &tx, n * 5, |buf| rng.gen(&data, buf));
 
-    make_fasta(">THREE Homo sapiens frequency", &tx, n * 5,
-                    &mut rng, &make_random(homosapiens));
     drop(tx);
-
     output_thread.join().unwrap();
 }
