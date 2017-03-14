@@ -8,6 +8,7 @@
 use std::io;
 use std::io::{Write, BufWriter};
 
+const BLOCK_SIZE: usize = 8 * 1024;
 const LINE_LENGTH: usize = 60;
 const IM: u32 = 139968;
 
@@ -50,25 +51,26 @@ fn make_fasta2<W: Write, I: Iterator<Item=u8>>(
 ) -> io::Result<()> {
     output.write_all(header.as_bytes())?;
 
-    let mut line = [0u8; LINE_LENGTH + 1];
+    let mut buf = [0u8; BLOCK_SIZE];
 
-    // Write whole lines.
-    line[LINE_LENGTH] = b'\n';
-    let num_lines = n / LINE_LENGTH;
-    for _ in 0..num_lines {
-        for i in &mut line[..LINE_LENGTH] {
+    // Write whole blocks.
+    let num_blocks = n / BLOCK_SIZE;
+    for _ in 0..num_blocks {
+        for i in &mut buf[..] {
             *i = it.next().unwrap();
         }
-        output.write_all(&line)?;
+        write(&buf[..], output)?;
     }
 
-    // Write trailing line.
-    let trailing_len = n % LINE_LENGTH;
-    for i in &mut line[..trailing_len] {
-        *i = it.next().unwrap();
+    // Write trailing block.
+    let trailing_len = n % BLOCK_SIZE;
+    if trailing_len > 0 {
+        for i in &mut buf[..trailing_len] {
+            *i = it.next().unwrap();
+        }
+        write(&buf[..trailing_len], output)?;
     }
-    line[trailing_len] = b'\n';
-    output.write_all(&line[..(trailing_len+1)])
+    Ok(())
 }
 
 fn make_fasta<W: Write>(
@@ -79,22 +81,43 @@ fn make_fasta<W: Write>(
     data: &[(u32, u8)],
 ) -> io::Result<()> {
     output.write_all(header.as_bytes())?;
-    let mut line = [0; LINE_LENGTH + 1];
+    let mut buf = [0u8; BLOCK_SIZE];
+
+    // Write whole blocks.
+    let num_blocks = n / BLOCK_SIZE;
+    for _ in 0..num_blocks {
+        rng.gen(data, &mut buf[..BLOCK_SIZE]);
+        write(&buf, output)?;
+    }
+
+    // Write trailing block.
+    let trailing_len = n % BLOCK_SIZE;
+    if trailing_len > 0 {
+        rng.gen(data, &mut buf[..trailing_len]);
+        write(&buf[..trailing_len], output)?;
+    }
+    Ok(())
+}
+
+fn write<W: Write>(buf: &[u8], output: &mut W) -> io::Result<()> {
+    let n = buf.len();
+    let num_lines = n / LINE_LENGTH;
 
     // Write whole lines.
-    line[LINE_LENGTH] = b'\n';
-    let num_lines = n / LINE_LENGTH;
-    for _ in 0..num_lines {
-        rng.gen(data, &mut line[..LINE_LENGTH]);
-        output.write_all(&line)?;
+    for i in 0..num_lines {
+        let start = i * LINE_LENGTH;
+        let end = start + LINE_LENGTH;
+        output.write_all(&buf[start..end])?;
+        output.write_all(b"\n")?;
     }
 
     // Write trailing line.
     let trailing_len = n % LINE_LENGTH;
     if trailing_len > 0 {
-        line[trailing_len] = b'\n';
-        rng.gen(data, &mut line[..trailing_len]);
-        output.write_all(&line[..(trailing_len+1)])?;
+        let start = num_lines * LINE_LENGTH;
+        let end = start + trailing_len;
+        output.write_all(&buf[start..end])?;
+        output.write_all(b"\n")?;
     }
     Ok(())
 }
