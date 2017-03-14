@@ -45,21 +45,31 @@ fn make_random(data: &[(char, f32)]) -> Vec<(u32, u8)> {
 }
 */
 
-fn make_fasta2<I: Iterator<Item=u8>>(header: &str, mut it: I, mut n: usize)
-    -> io::Result<()> {
+fn make_fasta2<I: Iterator<Item=u8>>(header: &str, mut it: I, n: usize)
+    -> io::Result<()>
+{
     let mut sysout = BufWriter::new(io::stdout());
     try!(sysout.write_all(header.as_bytes()));
+
     let mut line = [0u8; LINE_LENGTH + 1];
-    while n > 0 {
-        let nb = min(LINE_LENGTH, n);
-        for i in 0..nb {
-            line[i] = it.next().unwrap();
+
+    // Write whole lines.
+    line[LINE_LENGTH] = b'\n';
+    let num_lines = n / (LINE_LENGTH + 1);
+    for _ in 0..num_lines {
+        for i in &mut line[..LINE_LENGTH] {
+            *i = it.next().unwrap();
         }
-        n -= nb;
-        line[nb] = '\n' as u8;
-        try!(sysout.write_all(&line[..(nb+1)]));
+        sysout.write_all(&line)?;
     }
-    Ok(())
+
+    // Write trailing line.
+    let trailing_len = n % (LINE_LENGTH + 1);
+    for i in &mut line[..trailing_len] {
+        *i = it.next().unwrap();
+    }
+    line[trailing_len] = b'\n';
+    sysout.write_all(&line[..(trailing_len+1)])
 }
 
 /*
