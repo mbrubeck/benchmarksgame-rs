@@ -148,9 +148,39 @@ fn main() {
     });
 
     // Output blocks from the first thread, then the second one, as they are completed.
+    let mut blocks = rx0.into_iter().chain(rx1);
     let mut output = BufWriter::new(io::stdout());
-    for mut block in rx0.into_iter().chain(rx1) {
-        format(&mut block);
-        output.write_all(&block).unwrap();
+
+    while let Some(mut block0) = blocks.next() {
+        if let Some(mut block1) = blocks.next() {
+            if let Some(mut block2) = blocks.next() {
+                if let Some(mut block3) = blocks.next() {
+                    // Four threads
+                    rayon::join(|| rayon::join(|| format(&mut block0), || format(&mut block1)),
+                                || rayon::join(|| format(&mut block2), || format(&mut block3)));
+                    output.write_all(&block0).unwrap();
+                    output.write_all(&block1).unwrap();
+                    output.write_all(&block2).unwrap();
+                    output.write_all(&block3).unwrap();
+                } else {
+                    // Three threads
+                    rayon::join(|| rayon::join(|| format(&mut block0),
+                                               || format(&mut block1)),
+                                || format(&mut block2));
+                    output.write_all(&block0).unwrap();
+                    output.write_all(&block1).unwrap();
+                    output.write_all(&block2).unwrap();
+                }
+            } else {
+                // Two threads
+                rayon::join(|| format(&mut block0), || format(&mut block1));
+                output.write_all(&block0).unwrap();
+                output.write_all(&block1).unwrap();
+            }
+        } else {
+            // One thread
+            format(&mut block0);
+            output.write_all(&block0).unwrap();
+        }
     }
 }
