@@ -25,7 +25,7 @@ distclean: clean
 
 bin/binary_trees: lib/$(ARENA).pkg lib/$(RAYON).pkg
 bin/fannkuch: lib/$(RAYON).pkg
-bin/fasta: lib/$(NUM_CPU).pkg
+bin/fasta: lib/$(RAYON).pkg
 bin/fasta_redux: lib/$(NUM_CPU).pkg
 bin/k_nucleotide: lib/$(FUTURES_CPUPOOL).pkg lib/$(ORDERMAP).pkg
 bin/mandelbrot: lib/$(RAYON).pkg

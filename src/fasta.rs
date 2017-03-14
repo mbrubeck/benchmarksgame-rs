@@ -5,6 +5,9 @@
 // contributed by TeXitoi
 // multi-threaded version contributed by Alisdair Owens
 
+extern crate rayon;
+
+use std::iter::repeat;
 use std::io;
 use std::io::{Write, BufWriter};
 use std::sync::mpsc::{channel, Sender};
@@ -19,8 +22,8 @@ struct MyRandom(u32);
 impl MyRandom {
     fn new() -> Self { MyRandom(42) }
 
-    fn gen(&mut self, probabilities: &[(u32, u8)], buf: &mut [u8]) {
-        for i in buf.iter_mut() {
+    fn gen(&mut self, probabilities: &[(u32, u8)], block: &mut [u8]) {
+        for i in block.iter_mut() {
             self.0 = (self.0 * 3877 + 29573) % IM;
             *i = probabilities.iter().find(|&&(p, _)| p >= self.0).unwrap().1;
         }
@@ -39,6 +42,9 @@ fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     }).collect()
 }
 
+/// Number of rows required for `n` FASTA codes
+fn num_lines(n: usize) -> usize { (n - 1) / LINE_LENGTH + 1 }
+
 /// Output FASTA data from the provided generator function.
 fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
                                    out_thread: &Sender<Vec<u8>>,
@@ -47,45 +53,51 @@ fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
 {
     out_thread.send(header.to_string().into_bytes()).unwrap();
 
+    /// Allocate a buffer with extra room for newlines
+    fn buf(n: usize) -> Vec<u8> {
+        let num_lines = num_lines(n);
+        let mut buf = Vec::with_capacity(n + num_lines);
+        unsafe { buf.set_len(n) }
+        buf
+    }
+
     // Write whole blocks.
     let num_blocks = n / BLOCK_SIZE;
     for _ in 0..num_blocks {
-        let mut buf = vec![0; BLOCK_SIZE];
-        gen(&mut buf);
-        out_thread.send(buf).unwrap();
+        let mut block = buf(BLOCK_SIZE);
+        gen(&mut block);
+        out_thread.send(block).unwrap();
     }
 
     // Write trailing block.
     let trailing_len = n % BLOCK_SIZE;
     if trailing_len > 0 {
-        let mut buf = vec![0; trailing_len];
-        gen(&mut buf);
-        out_thread.send(buf).unwrap();
+        let mut block = buf(trailing_len);
+        gen(&mut block);
+        out_thread.send(block).unwrap();
     }
 }
 
-/// Print FASTA data in 60-column lines.
-fn write<W: Write>(buf: &[u8], output: &mut W) -> io::Result<()> {
-    let n = buf.len();
-    let num_lines = n / LINE_LENGTH;
+/// Wrap data to 60 columns.
+fn format(block: &mut Vec<u8>) {
+    let n = block.len();
+    if n == 0 { return }
 
-    // Write whole lines.
-    for i in 0..num_lines {
-        let start = i * LINE_LENGTH;
-        let end = start + LINE_LENGTH;
-        output.write_all(&buf[start..end])?;
-        output.write_all(b"\n")?;
-    }
+    let num_lines = num_lines(n);
+    block.extend(repeat(b'\n').take(num_lines));
 
-    // Write trailing line.
-    let trailing_len = n % LINE_LENGTH;
-    if trailing_len > 0 {
-        let start = num_lines * LINE_LENGTH;
-        let end = start + trailing_len;
-        output.write_all(&buf[start..end])?;
-        output.write_all(b"\n")?;
+    let mut i = n - 1;
+    let mut j = n - 2 + num_lines;
+
+    while i >= LINE_LENGTH {
+        block[j] = block[i];
+        j -= 1;
+        if i % LINE_LENGTH == 0 {
+            block[j] = b'\n';
+            j -= 1;
+        }
+        i -= 1;
     }
-    Ok(())
 }
 
 fn main() {
@@ -109,7 +121,7 @@ fn main() {
                            CAAAAA";
         let mut it = alu.iter().cloned().cycle();
 
-        make_fasta(">ONE Homo sapiens alu", &tx0, n * 2, |buf| for i in buf {
+        make_fasta(">ONE Homo sapiens alu", &tx0, n * 2, |block| for i in block {
             *i = it.next().unwrap()
         });
     });
@@ -125,19 +137,20 @@ fn main() {
               ('V', 0.02), ('W', 0.02), ('Y', 0.02)]);
 
         make_fasta(">TWO IUB ambiguity codes", &tx1, n * 3,
-                   |buf| rng.gen(&iub, buf));
+                   |block| rng.gen(&iub, block));
 
         let homosapiens = cumulative_probabilities(
             &[('a', 0.3029549426680), ('c', 0.1979883004921),
               ('g', 0.1975473066391), ('t', 0.3015094502008)]);
 
         make_fasta(">THREE Homo sapiens frequency", &tx1, n * 5,
-                   |buf| rng.gen(&homosapiens, buf));
+                   |block| rng.gen(&homosapiens, block));
     });
 
-    // Output completed blocks from the first thread, then the second one.
+    // Output blocks from the first thread, then the second one, as they are completed.
     let mut output = BufWriter::new(io::stdout());
-    for block in rx0.into_iter().chain(rx1) {
-        write(&block, &mut output).unwrap();
+    for mut block in rx0.into_iter().chain(rx1) {
+        format(&mut block);
+        output.write_all(&block).unwrap();
     }
 }
