@@ -14,8 +14,8 @@ const LINE_LENGTH: usize = 60;
 const BLOCK_SIZE: usize = LINE_LENGTH * 1024;
 const IM: u32 = 139968;
 
+/// Pseudo-random number generator
 struct MyRandom(u32);
-
 impl MyRandom {
     fn new() -> Self { MyRandom(42) }
 
@@ -27,6 +27,7 @@ impl MyRandom {
     }
 }
 
+/// From a probability distribution, generate a cumulative probability distribution.
 fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     fn normalize(p: f32) -> u32 {
         (p * IM as f32).floor() as u32
@@ -38,6 +39,7 @@ fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     }).collect()
 }
 
+/// Output FASTA data from the provided generator function.
 fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
                                    out_thread: &Sender<Vec<u8>>,
                                    n: usize,
@@ -62,6 +64,7 @@ fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
     }
 }
 
+/// Print FASTA data in 60-column lines.
 fn write<W: Write>(buf: &[u8], output: &mut W) -> io::Result<()> {
     let n = buf.len();
     let num_lines = n / LINE_LENGTH;
@@ -94,6 +97,7 @@ fn main() {
     let (tx0, rx0) = channel::<Vec<u8>>();
     let (tx1, rx1) = channel::<Vec<u8>>();
 
+    // Generate a DNA sequence by copying from the given sequence.
     thread::spawn(move || {
         let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
                            GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
@@ -110,26 +114,28 @@ fn main() {
         });
     });
 
+    // Generate DNA sequences by weighted random selection from two alphabets.
     thread::spawn(move || {
-        let iub = &[('a', 0.27), ('c', 0.12), ('g', 0.12),
-                    ('t', 0.27), ('B', 0.02), ('D', 0.02),
-                    ('H', 0.02), ('K', 0.02), ('M', 0.02),
-                    ('N', 0.02), ('R', 0.02), ('S', 0.02),
-                    ('V', 0.02), ('W', 0.02), ('Y', 0.02)];
-
-        let homosapiens = &[('a', 0.3029549426680),
-                            ('c', 0.1979883004921),
-                            ('g', 0.1975473066391),
-                            ('t', 0.3015094502008)];
-
         let mut rng = MyRandom::new();
-        let ps = cumulative_probabilities(iub);
-        make_fasta(">TWO IUB ambiguity codes", &tx1, n * 3, |buf| rng.gen(&ps, buf));
+        let iub = cumulative_probabilities(
+            &[('a', 0.27), ('c', 0.12), ('g', 0.12),
+              ('t', 0.27), ('B', 0.02), ('D', 0.02),
+              ('H', 0.02), ('K', 0.02), ('M', 0.02),
+              ('N', 0.02), ('R', 0.02), ('S', 0.02),
+              ('V', 0.02), ('W', 0.02), ('Y', 0.02)]);
 
-        let ps = cumulative_probabilities(homosapiens);
-        make_fasta(">THREE Homo sapiens frequency", &tx1, n * 5, |buf| rng.gen(&ps, buf));
+        make_fasta(">TWO IUB ambiguity codes", &tx1, n * 3,
+                   |buf| rng.gen(&iub, buf));
+
+        let homosapiens = cumulative_probabilities(
+            &[('a', 0.3029549426680), ('c', 0.1979883004921),
+              ('g', 0.1975473066391), ('t', 0.3015094502008)]);
+
+        make_fasta(">THREE Homo sapiens frequency", &tx1, n * 5,
+                   |buf| rng.gen(&homosapiens, buf));
     });
 
+    // Output completed blocks from the first thread, then the second one.
     let mut output = BufWriter::new(io::stdout());
     for block in rx0.into_iter().chain(rx1) {
         write(&block, &mut output).unwrap();
