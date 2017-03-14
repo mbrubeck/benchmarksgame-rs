@@ -27,17 +27,15 @@ impl MyRandom {
     }
 }
 
-fn normalize(p: f32) -> u32 {
-    (p * IM as f32).floor() as u32
-}
-
 fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
-    let mut acc = 0.;
-    data.iter().map(|&(ch, p)| {
-        acc += p;
-        (normalize(acc), ch as u8)
-    })
-    .collect()
+    fn normalize(p: f32) -> u32 {
+        (p * IM as f32).floor() as u32
+    }
+
+    data.iter().scan(0., |acc, &(ch, p)| {
+        *acc += p;
+        Some((normalize(*acc), ch as u8))
+    }).collect()
 }
 
 fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
