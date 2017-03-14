@@ -7,9 +7,11 @@
 
 use std::io;
 use std::io::{Write, BufWriter};
+use std::sync::mpsc::{channel, Sender};
+use std::thread;
 
-const BLOCK_SIZE: usize = 8 * 1024;
 const LINE_LENGTH: usize = 60;
+const BLOCK_SIZE: usize = LINE_LENGTH * 1024;
 const IM: u32 = 139968;
 
 struct MyRandom(u32);
@@ -43,60 +45,59 @@ fn make_random(data: &[(char, f32)]) -> Vec<(u32, u8)> {
     .collect()
 }
 
-fn make_fasta2<W: Write, I: Iterator<Item=u8>>(
+fn make_fasta2<I: Iterator<Item=u8>>(
     header: &str,
-    output: &mut W,
+    out_thread: &Sender<Vec<u8>>,
     mut it: I,
-    n: usize
-) -> io::Result<()> {
-    output.write_all(header.as_bytes())?;
-
-    let mut buf = [0u8; BLOCK_SIZE];
+    n: usize)
+{
+    out_thread.send(header.to_string().into_bytes()).unwrap();
 
     // Write whole blocks.
     let num_blocks = n / BLOCK_SIZE;
     for _ in 0..num_blocks {
-        for i in &mut buf[..] {
+        let mut buf = vec![0; BLOCK_SIZE];
+        for i in &mut buf {
             *i = it.next().unwrap();
         }
-        write(&buf[..], output)?;
+        out_thread.send(buf).unwrap();
     }
 
     // Write trailing block.
     let trailing_len = n % BLOCK_SIZE;
     if trailing_len > 0 {
-        for i in &mut buf[..trailing_len] {
+        let mut buf = vec![0; trailing_len];
+        for i in &mut buf {
             *i = it.next().unwrap();
         }
-        write(&buf[..trailing_len], output)?;
+        out_thread.send(buf).unwrap();
     }
-    Ok(())
 }
 
-fn make_fasta<W: Write>(
+fn make_fasta(
     header: &str,
-    output: &mut W,
+    out_thread: &Sender<Vec<u8>>,
     n: usize,
     rng: &mut MyRandom,
-    data: &[(u32, u8)],
-) -> io::Result<()> {
-    output.write_all(header.as_bytes())?;
-    let mut buf = [0u8; BLOCK_SIZE];
+    data: &[(u32, u8)])
+{
+    out_thread.send(header.to_string().into_bytes()).unwrap();
 
     // Write whole blocks.
     let num_blocks = n / BLOCK_SIZE;
     for _ in 0..num_blocks {
-        rng.gen(data, &mut buf[..BLOCK_SIZE]);
-        write(&buf, output)?;
+        let mut buf = vec![0; BLOCK_SIZE];
+        rng.gen(data, &mut buf);
+        out_thread.send(buf).unwrap();
     }
 
     // Write trailing block.
     let trailing_len = n % BLOCK_SIZE;
     if trailing_len > 0 {
-        rng.gen(data, &mut buf[..trailing_len]);
-        write(&buf[..trailing_len], output)?;
+        let mut buf = vec![0; trailing_len];
+        rng.gen(data, &mut buf);
+        out_thread.send(buf).unwrap();
     }
-    Ok(())
 }
 
 fn write<W: Write>(buf: &[u8], output: &mut W) -> io::Result<()> {
@@ -128,7 +129,14 @@ fn main() {
         .and_then(|n| n.parse().ok())
         .unwrap_or(1000);
 
-    let mut output = BufWriter::new(io::stdout());
+    let (tx, rx) = channel::<Vec<u8>>();
+
+    let output_thread = thread::spawn(move || {
+        let mut output = BufWriter::new(io::stdout());
+        while let Ok(block) = rx.recv() {
+            write(&block, &mut output).unwrap();
+        }
+    });
 
     let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
                        GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
@@ -139,8 +147,8 @@ fn main() {
                        CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCT\
                        CAAAAA";
 
-    make_fasta2(">ONE Homo sapiens alu\n", &mut output,
-                    alu.iter().cloned().cycle(), n * 2).unwrap();
+    make_fasta2(">ONE Homo sapiens alu", &tx,
+                    alu.iter().cloned().cycle(), n * 2);
 
     let iub = &[('a', 0.27), ('c', 0.12), ('g', 0.12),
                 ('t', 0.27), ('B', 0.02), ('D', 0.02),
@@ -155,9 +163,12 @@ fn main() {
 
     let mut rng = MyRandom::new();
 
-    make_fasta(">TWO IUB ambiguity codes\n", &mut output, n * 3,
-                    &mut rng, &make_random(iub)).unwrap();
+    make_fasta(">TWO IUB ambiguity codes", &tx, n * 3,
+                    &mut rng, &make_random(iub));
 
-    make_fasta(">THREE Homo sapiens frequency\n", &mut output, n * 5,
-                    &mut rng, &make_random(homosapiens)).unwrap();
+    make_fasta(">THREE Homo sapiens frequency", &tx, n * 5,
+                    &mut rng, &make_random(homosapiens));
+    drop(tx);
+
+    output_thread.join().unwrap();
 }
