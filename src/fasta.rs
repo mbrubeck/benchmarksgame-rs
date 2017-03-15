@@ -27,13 +27,9 @@ impl Rng {
 
 /// From a probability distribution, generate a cumulative probability distribution.
 fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
-    fn normalize(p: f32) -> u32 {
-        (p * IM as f32).floor() as u32
-    }
-
-    data.iter().scan(0., |acc, &(ch, p)| {
-        *acc += p;
-        Some((normalize(*acc), ch as u8))
+    data.iter().scan(0., |sum, &(ch, p)| {
+        *sum += p;
+        Some(((*sum * IM as f32).floor() as u32, ch as u8))
     }).collect()
 }
 
