@@ -1,6 +1,8 @@
 // The Computer Language Benchmarks Game
 // http://benchmarksgame.alioth.debian.org/
 //
+// contributed by the Rust Project Developers
+// contributed by TeXitoi
 // contributed by Matt Brubeck
 
 use std::env::args;
