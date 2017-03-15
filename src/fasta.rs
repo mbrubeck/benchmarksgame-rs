@@ -70,7 +70,7 @@ fn main() {
     let mut out = BufWriter::new(io::stdout());
 
     // Generate a DNA sequence by copying from the given sequence.
-    const ALU: &[u8] =
+    const ALU: &'static [u8] =
         b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGA\
           TCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
           AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAG\
@@ -78,7 +78,7 @@ fn main() {
           CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
     let mut it = ALU.iter().cloned().cycle();
 
-    out.write_all(b">ONE Homo sapiens alu\n").unwrap();
+    writeln!(out, ">ONE Homo sapiens alu").unwrap();
     make_fasta(n * 2, |block| for i in block.iter_mut() {
         *i = it.next().unwrap()
     }, &mut out);
@@ -95,9 +95,9 @@ fn main() {
 
     let mut rng = Rng::new();
 
-    out.write_all(&b">TWO IUB ambiguity codes\n"[..]).unwrap();
+    writeln!(out, ">TWO IUB ambiguity codes").unwrap();
     make_fasta(n * 3, |block| rng.gen(&p0, block), &mut out);
 
-    out.write_all(&b">THREE Homo sapiens frequency\n"[..]).unwrap();
+    writeln!(out, ">THREE Homo sapiens frequency").unwrap();
     make_fasta(n * 5, |block| rng.gen(&p1, block), &mut out);
 }
