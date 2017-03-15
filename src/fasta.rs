@@ -59,15 +59,10 @@ fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
 }
 
 /// Print FASTA data in 60-column lines.
-fn write<W: Write>(buf: &[u8], output: &mut W) -> io::Result<()> {
-    let n = buf.len();
-    let mut start = 0;
-
-    while start < n {
-        let end = std::cmp::min(start + LINE_LENGTH, n);
-        output.write_all(&buf[start..end])?;
+fn write<W: Write>(block: &[u8], output: &mut W) -> io::Result<()> {
+    for chunk in block.chunks(LINE_LENGTH) {
+        output.write_all(chunk)?;
         output.write_all(b"\n")?;
-        start = end;
     }
     Ok(())
 }
