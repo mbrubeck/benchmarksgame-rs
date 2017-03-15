@@ -76,7 +76,7 @@ fn main() {
     // Generate a DNA sequence by copying from the given sequence.
     let (tx, rx0) = channel();
     thread::spawn(move || {
-        const ALU: &[u8] =
+        const ALU: &'static [u8] =
             b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGA\
               TCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
               AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAG\
