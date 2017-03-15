@@ -15,8 +15,8 @@ struct Rng(u32);
 impl Rng {
     fn new() -> Self { Rng(42) }
 
-    fn gen(&mut self, probabilities: &[(u32, u8)], buf: &mut [u8]) {
-        for i in buf.iter_mut() {
+    fn gen(&mut self, probabilities: &[(u32, u8)], block: &mut [u8]) {
+        for i in block.iter_mut() {
             self.0 = (self.0 * 3877 + 29573) % IM;
             *i = probabilities.iter().find(|&&(p, _)| p >= self.0).unwrap().1;
         }
@@ -24,10 +24,10 @@ impl Rng {
 }
 
 /// From a probability distribution, generate a cumulative probability distribution.
-fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
-    data.iter().scan(0., |sum, &(ch, p)| {
+fn cumulative_probabilities(ps: &[(char, f32)]) -> Vec<(u32, u8)> {
+    ps.iter().scan(0., |sum, &(c, p)| {
         *sum += p;
-        Some(((*sum * IM as f32).floor() as u32, ch as u8))
+        Some(((*sum * IM as f32).floor() as u32, c as u8))
     }).collect()
 }
 
@@ -63,12 +63,7 @@ fn write<W: Write>(block: &[u8], output: &mut W) -> io::Result<()> {
     Ok(())
 }
 
-fn run() -> io::Result<()> {
-    let n = std::env::args_os().nth(1)
-        .and_then(|s| s.into_string().ok())
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(1000);
-
+fn run(n: usize) -> io::Result<()> {
     let mut out = BufWriter::new(io::stdout());
 
     // Generate a DNA sequence by copying from the given sequence.
@@ -109,5 +104,10 @@ fn run() -> io::Result<()> {
 }
 
 fn main() {
-    run().unwrap()
+    let n = std::env::args_os().nth(1)
+        .and_then(|s| s.into_string().ok())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(1000);
+
+    run(n).unwrap()
 }
