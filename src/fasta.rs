@@ -3,10 +3,7 @@
 //
 // contributed by Matt Brubeck
 
-use std::io;
-use std::io::{Write, BufWriter};
-use std::sync::mpsc::{channel, Sender};
-use std::thread;
+use std::io::{self, Write, BufWriter};
 
 const LINE_LENGTH: usize = 60;
 const BLOCK_SIZE: usize = LINE_LENGTH * 1024;
@@ -34,40 +31,32 @@ fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
 }
 
 /// Output FASTA data from the provided generator function.
-fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
-                                   out_thread: &Sender<Vec<u8>>,
-                                   n: usize,
-                                   mut gen: F)
+fn make_fasta<F, W>(n: usize, mut f: F, w: &mut W)
+    where F: FnMut(&mut [u8]), W: Write
 {
-    out_thread.send(header.to_string().into_bytes()).unwrap();
+    let mut block = vec![0; BLOCK_SIZE];
 
     // Write whole blocks.
     let num_blocks = n / BLOCK_SIZE;
     for _ in 0..num_blocks {
-        let mut buf = vec![0; BLOCK_SIZE];
-        gen(&mut buf);
-        out_thread.send(buf).unwrap();
+        f(&mut block);
+        write(&block, w).unwrap();
     }
 
     // Write trailing block.
     let trailing_len = n % BLOCK_SIZE;
     if trailing_len > 0 {
-        let mut buf = vec![0; trailing_len];
-        gen(&mut buf);
-        out_thread.send(buf).unwrap();
+        f(&mut block[..trailing_len]);
+        write(&block[..trailing_len], w).unwrap();
     }
 }
 
 /// Print FASTA data in 60-column lines.
-fn write<W: Write>(buf: &[u8], output: &mut W) -> io::Result<()> {
-    let n = buf.len();
-    let mut start = 0;
-
-    while start < n {
-        let end = std::cmp::min(start + LINE_LENGTH, n);
-        output.write_all(&buf[start..end])?;
+#[inline(always)]
+fn write<W: Write>(block: &[u8], output: &mut W) -> io::Result<()> {
+    for chunk in block.chunks(LINE_LENGTH) {
+        output.write_all(chunk)?;
         output.write_all(b"\n")?;
-        start = end;
     }
     Ok(())
 }
@@ -78,43 +67,37 @@ fn main() {
         .and_then(|n| n.parse().ok())
         .unwrap_or(1000);
 
-    // Generate a DNA sequence by copying from the given sequence.
-    let (tx, rx0) = channel();
-    thread::spawn(move || {
-        const ALU: &[u8] =
-            b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGA\
-              TCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
-              AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAG\
-              GCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
-              CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
-        let mut it = ALU.iter().cloned().cycle();
+    let mut out = BufWriter::new(io::stdout());
 
-        make_fasta(">ONE Homo sapiens alu", &tx, n * 2, |buf| for i in buf {
-            *i = it.next().unwrap()
-        });
-    });
+    // Generate a DNA sequence by copying from the given sequence.
+    const ALU: &[u8] =
+        b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGA\
+          TCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
+          AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAG\
+          GCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
+          CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+    let mut it = ALU.iter().cloned().cycle();
+
+    out.write_all(b">ONE Homo sapiens alu\n").unwrap();
+    make_fasta(n * 2, |block| for i in block.iter_mut() {
+        *i = it.next().unwrap()
+    }, &mut out);
 
     // Generate DNA sequences by weighted random selection from two alphabets.
-    let (tx, rx1) = channel();
-    thread::spawn(move || {
-        let p0 = cumulative_probabilities(
-            &[('a', 0.27), ('c', 0.12), ('g', 0.12), ('t', 0.27), ('B', 0.02),
-              ('D', 0.02), ('H', 0.02), ('K', 0.02), ('M', 0.02), ('N', 0.02),
-              ('R', 0.02), ('S', 0.02), ('V', 0.02), ('W', 0.02), ('Y', 0.02)]);
+    let p0 = cumulative_probabilities(
+        &[('a', 0.27), ('c', 0.12), ('g', 0.12), ('t', 0.27), ('B', 0.02),
+          ('D', 0.02), ('H', 0.02), ('K', 0.02), ('M', 0.02), ('N', 0.02),
+          ('R', 0.02), ('S', 0.02), ('V', 0.02), ('W', 0.02), ('Y', 0.02)]);
 
-        let p1 = cumulative_probabilities(
-            &[('a', 0.3029549426680), ('c', 0.1979883004921),
-              ('g', 0.1975473066391), ('t', 0.3015094502008)]);
+    let p1 = cumulative_probabilities(
+        &[('a', 0.3029549426680), ('c', 0.1979883004921),
+          ('g', 0.1975473066391), ('t', 0.3015094502008)]);
 
-        let mut rng = Rng::new();
+    let mut rng = Rng::new();
 
-        make_fasta(">TWO IUB ambiguity codes",      &tx, n * 3, |buf| rng.gen(&p0, buf));
-        make_fasta(">THREE Homo sapiens frequency", &tx, n * 5, |buf| rng.gen(&p1, buf));
-    });
+    out.write_all(&b">TWO IUB ambiguity codes\n"[..]).unwrap();
+    make_fasta(n * 3, |block| rng.gen(&p0, block), &mut out);
 
-    // Output completed blocks from the first thread, then the second one.
-    let mut output = BufWriter::new(io::stdout());
-    for block in rx0.into_iter().chain(rx1) {
-        write(&block, &mut output).unwrap();
-    }
+    out.write_all(&b">THREE Homo sapiens frequency\n"[..]).unwrap();
+    make_fasta(n * 5, |block| rng.gen(&p1, block), &mut out);
 }
