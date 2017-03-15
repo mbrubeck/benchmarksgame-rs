@@ -1,9 +1,7 @@
 // The Computer Language Benchmarks Game
 // http://benchmarksgame.alioth.debian.org/
 //
-// contributed by the Rust Project Developers
-// contributed by TeXitoi
-// multi-threaded version contributed by Alisdair Owens
+// contributed by Matt Brubeck
 
 use std::io;
 use std::io::{Write, BufWriter};
@@ -15,9 +13,9 @@ const BLOCK_SIZE: usize = LINE_LENGTH * 1024;
 const IM: u32 = 139968;
 
 /// Pseudo-random number generator
-struct MyRandom(u32);
-impl MyRandom {
-    fn new() -> Self { MyRandom(42) }
+struct Rng(u32);
+impl Rng {
+    fn new() -> Self { Rng(42) }
 
     fn gen(&mut self, probabilities: &[(u32, u8)], buf: &mut [u8]) {
         for i in buf.iter_mut() {
@@ -94,45 +92,38 @@ fn main() {
         .and_then(|n| n.parse().ok())
         .unwrap_or(1000);
 
-    let (tx0, rx0) = channel::<Vec<u8>>();
-    let (tx1, rx1) = channel::<Vec<u8>>();
-
     // Generate a DNA sequence by copying from the given sequence.
+    let (tx, rx0) = channel();
     thread::spawn(move || {
-        let alu: &[u8] = b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTT\
-                           GGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTC\
-                           GAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
-                           AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTG\
-                           TAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCT\
-                           TGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
-                           CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCT\
-                           CAAAAA";
-        let mut it = alu.iter().cloned().cycle();
+        const ALU: &[u8] =
+            b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGA\
+              TCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
+              AAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAG\
+              GCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCG\
+              CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+        let mut it = ALU.iter().cloned().cycle();
 
-        make_fasta(">ONE Homo sapiens alu", &tx0, n * 2, |buf| for i in buf {
+        make_fasta(">ONE Homo sapiens alu", &tx, n * 2, |buf| for i in buf {
             *i = it.next().unwrap()
         });
     });
 
     // Generate DNA sequences by weighted random selection from two alphabets.
+    let (tx, rx1) = channel();
     thread::spawn(move || {
-        let mut rng = MyRandom::new();
-        let iub = cumulative_probabilities(
-            &[('a', 0.27), ('c', 0.12), ('g', 0.12),
-              ('t', 0.27), ('B', 0.02), ('D', 0.02),
-              ('H', 0.02), ('K', 0.02), ('M', 0.02),
-              ('N', 0.02), ('R', 0.02), ('S', 0.02),
-              ('V', 0.02), ('W', 0.02), ('Y', 0.02)]);
+        let p0 = cumulative_probabilities(
+            &[('a', 0.27), ('c', 0.12), ('g', 0.12), ('t', 0.27), ('B', 0.02),
+              ('D', 0.02), ('H', 0.02), ('K', 0.02), ('M', 0.02), ('N', 0.02),
+              ('R', 0.02), ('S', 0.02), ('V', 0.02), ('W', 0.02), ('Y', 0.02)]);
 
-        make_fasta(">TWO IUB ambiguity codes", &tx1, n * 3,
-                   |buf| rng.gen(&iub, buf));
-
-        let homosapiens = cumulative_probabilities(
+        let p1 = cumulative_probabilities(
             &[('a', 0.3029549426680), ('c', 0.1979883004921),
               ('g', 0.1975473066391), ('t', 0.3015094502008)]);
 
-        make_fasta(">THREE Homo sapiens frequency", &tx1, n * 5,
-                   |buf| rng.gen(&homosapiens, buf));
+        let mut rng = Rng::new();
+
+        make_fasta(">TWO IUB ambiguity codes",      &tx, n * 3, |buf| rng.gen(&p0, buf));
+        make_fasta(">THREE Homo sapiens frequency", &tx, n * 5, |buf| rng.gen(&p1, buf));
     });
 
     // Output completed blocks from the first thread, then the second one.
