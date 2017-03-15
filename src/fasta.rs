@@ -3,6 +3,7 @@
 //
 // contributed by Matt Brubeck
 
+use std::env::args;
 use std::io::{self, Write, BufWriter};
 
 const LINE_LENGTH: usize = 60;
@@ -104,10 +105,6 @@ fn run(n: usize) -> io::Result<()> {
 }
 
 fn main() {
-    let n = std::env::args_os().nth(1)
-        .and_then(|s| s.into_string().ok())
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(1000);
-
-    run(n).unwrap()
+    let n = args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(1000);
+    run(n).unwrap();
 }
