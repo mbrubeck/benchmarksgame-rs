@@ -31,7 +31,7 @@ fn cumulative_probabilities(data: &[(char, f32)]) -> Vec<(u32, u8)> {
 }
 
 /// Output FASTA data from the provided generator function.
-fn make_fasta<F, W>(n: usize, mut f: F, w: &mut W)
+fn make_fasta<F, W>(n: usize, mut f: F, w: &mut W) -> io::Result<()>
     where F: FnMut(&mut [u8]), W: Write
 {
     let mut block = vec![0; BLOCK_SIZE];
@@ -40,15 +40,16 @@ fn make_fasta<F, W>(n: usize, mut f: F, w: &mut W)
     let num_blocks = n / BLOCK_SIZE;
     for _ in 0..num_blocks {
         f(&mut block);
-        write(&block, w).unwrap();
+        write(&block, w)?;
     }
 
     // Write trailing block.
     let trailing_len = n % BLOCK_SIZE;
     if trailing_len > 0 {
         f(&mut block[..trailing_len]);
-        write(&block[..trailing_len], w).unwrap();
+        write(&block[..trailing_len], w)?;
     }
+    Ok(())
 }
 
 /// Print FASTA data in 60-column lines.
@@ -61,7 +62,7 @@ fn write<W: Write>(block: &[u8], output: &mut W) -> io::Result<()> {
     Ok(())
 }
 
-fn main() {
+fn run() -> io::Result<()> {
     let n = std::env::args_os().nth(1)
         .and_then(|s| s.into_string().ok())
         .and_then(|n| n.parse().ok())
@@ -78,10 +79,10 @@ fn main() {
           CCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
     let mut it = ALU.iter().cloned().cycle();
 
-    writeln!(out, ">ONE Homo sapiens alu").unwrap();
+    writeln!(out, ">ONE Homo sapiens alu")?;
     make_fasta(n * 2, |block| for i in block.iter_mut() {
         *i = it.next().unwrap()
-    }, &mut out);
+    }, &mut out)?;
 
     // Generate DNA sequences by weighted random selection from two alphabets.
     let p0 = cumulative_probabilities(
@@ -95,9 +96,15 @@ fn main() {
 
     let mut rng = Rng::new();
 
-    writeln!(out, ">TWO IUB ambiguity codes").unwrap();
-    make_fasta(n * 3, |block| rng.gen(&p0, block), &mut out);
+    writeln!(out, ">TWO IUB ambiguity codes")?;
+    make_fasta(n * 3, |block| rng.gen(&p0, block), &mut out)?;
 
-    writeln!(out, ">THREE Homo sapiens frequency").unwrap();
-    make_fasta(n * 5, |block| rng.gen(&p1, block), &mut out);
+    writeln!(out, ">THREE Homo sapiens frequency")?;
+    make_fasta(n * 5, |block| rng.gen(&p1, block), &mut out)?;
+
+    Ok(())
+}
+
+fn main() {
+    run().unwrap()
 }
