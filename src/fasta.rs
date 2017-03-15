@@ -65,23 +65,13 @@ fn make_fasta<F: FnMut(&mut [u8])>(header: &str,
 /// Print FASTA data in 60-column lines.
 fn write<W: Write>(buf: &[u8], output: &mut W) -> io::Result<()> {
     let n = buf.len();
-    let num_lines = n / LINE_LENGTH;
+    let mut start = 0;
 
-    // Write whole lines.
-    for i in 0..num_lines {
-        let start = i * LINE_LENGTH;
-        let end = start + LINE_LENGTH;
+    while start < n {
+        let end = std::cmp::min(start + LINE_LENGTH, n);
         output.write_all(&buf[start..end])?;
         output.write_all(b"\n")?;
-    }
-
-    // Write trailing line.
-    let trailing_len = n % LINE_LENGTH;
-    if trailing_len > 0 {
-        let start = num_lines * LINE_LENGTH;
-        let end = start + trailing_len;
-        output.write_all(&buf[start..end])?;
-        output.write_all(b"\n")?;
+        start = end;
     }
     Ok(())
 }
