@@ -11,6 +11,7 @@ const IM: u32 = 139968;
 
 /// Pseudo-random number generator
 struct Rng(u32);
+
 impl Rng {
     fn new() -> Self { Rng(42) }
 
@@ -71,6 +72,7 @@ fn run() -> io::Result<()> {
     let mut out = BufWriter::new(io::stdout());
 
     // Generate a DNA sequence by copying from the given sequence.
+
     const ALU: &'static [u8] =
         b"GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGA\
           TCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACT\
@@ -80,11 +82,12 @@ fn run() -> io::Result<()> {
     let mut it = ALU.iter().cloned().cycle();
 
     writeln!(out, ">ONE Homo sapiens alu")?;
-    make_fasta(n * 2, |block| for i in block.iter_mut() {
+    make_fasta(n * 2, |block| for i in block {
         *i = it.next().unwrap()
     }, &mut out)?;
 
     // Generate DNA sequences by weighted random selection from two alphabets.
+
     let p0 = cumulative_probabilities(
         &[('a', 0.27), ('c', 0.12), ('g', 0.12), ('t', 0.27), ('B', 0.02),
           ('D', 0.02), ('H', 0.02), ('K', 0.02), ('M', 0.02), ('N', 0.02),
