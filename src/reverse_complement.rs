@@ -1,8 +1,8 @@
 // The Computer Language Benchmarks Game
-// http://benchmarksgame.alioth.debian.org/
+// https://salsa.debian.org/benchmarksgame-team/benchmarksgame/
 //
 // contributed by the Rust Project Developers
-// contributed by Cristi Cobzarenco (@cristicbz)
+// contributed by Cristi Cobzarenco
 // contributed by TeXitoi
 // contributed by Matt Brubeck
 
@@ -15,12 +15,6 @@ use std::mem::replace;
 
 /// This controls the size of reads from the input. Chosen to match the C entry.
 const READ_SIZE: usize = 16 * 1024;
-
-/// Length of a normal line including the terminating \n.
-const LINE_LEN: usize = 61;
-
-/// Chunks larger than this will be split into separate parallel tasks.
-const SEQUENTIAL_SIZE: usize = 2048;
 
 /// Lookup table to find the complement of a single FASTA code.
 fn build_table() -> [u8; 256] {
@@ -74,6 +68,10 @@ impl<'a, T> SplitOff for &'a mut [T] {
     }
 }
 
+/// Length of a normal line including the terminating \n.
+const LINE_LEN: usize = 61;
+const SEQUENTIAL_SIZE: usize = 2048;
+
 /// Compute the reverse complement for two contiguous chunks without line breaks.
 fn reverse_chunks(left: &mut [u8], right: &mut [u8], table: &[u8; 256]) {
     for (x, y) in left.iter_mut().zip(right.iter_mut().rev()) {
@@ -125,7 +123,6 @@ fn reverse_complement_left_right(mut left: &mut [u8],
             reverse_chunks(a, b, table);
         }
     } else {
-        // Divide large chunks in half and fork them into two parallel tasks.
         let line_count = len / LINE_LEN;
         let mid = line_count / 2 * LINE_LEN; // Split on a whole number of lines.
 
@@ -138,20 +135,20 @@ fn reverse_complement_left_right(mut left: &mut [u8],
 
 /// Compute the reverse complement of one sequence.
 fn reverse_complement(seq: &mut [u8], table: &[u8; 256]) {
-    let len = seq.len();
+    let len = seq.len() - 1;
+    let seq = &mut seq[..len]; // Drop the last newline
     let trailing_len = len % LINE_LEN;
     let (left, right) = seq.split_at_mut(len / 2);
     reverse_complement_left_right(left, right, trailing_len, table);
 }
 
-/// Read sequences from stdin and print the reverse complement to stdout.
 fn run() -> io::Result<()> {
     let stdin = File::open("/dev/stdin")?;
     let size = stdin.metadata()?.len() as usize;
     let mut input = BufReader::with_capacity(READ_SIZE, stdin);
-
-    // Read the input, splitting it into sequences.
     let mut buf = Vec::with_capacity(size);
+
+
     let mut seqs = vec![];
     loop {
         // Read the header line.
@@ -159,14 +156,13 @@ fn run() -> io::Result<()> {
         let seq_start = buf.len();
         // Read sequence data.
         input.read_until(b'>', &mut buf)?;
-
-        let len = buf.len();
-        if buf[len - 1] == b'>' {
+        let i = buf.len() - 1;
+        if buf[i] == b'>' {
             // Found the start of a new sequence.
-            seqs.push(seq_start..len - 2); // exclude "\n>"
+            seqs.push(seq_start..i);
         } else {
             // Reached the end of the input.
-            seqs.push(seq_start..len - 1); // exclude "\n"
+            seqs.push(seq_start..buf.len());
             break
         }
     }
