@@ -12,9 +12,6 @@ use std::cmp::min;
 use std::io::{BufRead, Result, Write, stdin, stdout};
 use std::mem::replace;
 
-/// This controls the size of reads from the input. Chosen to match the C entry.
-const READ_SIZE: usize = 16 * 1024;
-
 /// Lookup table to find the complement of a single FASTA code.
 fn build_table() -> [u8; 256] {
     let mut table = [0; 256];
@@ -144,34 +141,45 @@ fn reverse_complement(seq: &mut [u8], table: &[u8; 256]) {
 fn run() -> Result<()> {
     let stdin = stdin();
     let mut input = stdin.lock();
-    let mut buf = Vec::with_capacity(READ_SIZE);
 
     let mut seqs = vec![];
     loop {
         // Read the header line.
-        input.read_until(b'\n', &mut buf)?;
-        let seq_start = buf.len();
+        let mut header = Vec::new();
+        input.read_until(b'\n', &mut header)?;
+
         // Read sequence data.
+        let mut buf = Vec::with_capacity(16 * 1024);
         input.read_until(b'>', &mut buf)?;
-        let i = buf.len() - 1;
-        if buf[i] == b'>' {
+        let end = buf.len() - 1;
+        if buf[end] == b'>' {
             // Found the start of a new sequence.
-            seqs.push(seq_start..i);
+            buf.truncate(end);
+            seqs.push((header, buf));
         } else {
             // Reached the end of the input.
-            seqs.push(seq_start..buf.len());
+            seqs.push((header, buf));
             break
         }
     }
 
     // Compute the reverse complements of each sequence.
     let table = build_table();
-    for seq in seqs {
-        reverse_complement(&mut buf[seq], &table);
+    for (_header, seq) in &mut seqs {
+        reverse_complement(seq, &table);
     }
 
     // Print the result.
-    stdout().write_all(&buf)
+    let stdout = stdout();
+    let mut output = stdout.lock();
+    for (i, (header, seq)) in seqs.iter().enumerate() {
+        if i > 0 {
+            output.write_all(b">")?;
+        }
+        output.write_all(header)?;
+        output.write_all(seq)?;
+    }
+    Ok(())
 }
 
 fn main() {
