@@ -8,9 +8,8 @@
 
 extern crate rayon;
 
-use std::io::{BufRead, BufReader, Write};
-use std::{cmp, io};
-use std::fs::File;
+use std::cmp::min;
+use std::io::{BufRead, Result, Write, stdin, stdout};
 use std::mem::replace;
 
 /// This controls the size of reads from the input. Chosen to match the C entry.
@@ -51,7 +50,7 @@ trait SplitOff {
 impl<'a, T> SplitOff for &'a mut [T] {
     /// Split the left `n` items from self and return them as a separate slice.
     fn split_off_left(&mut self, n: usize) -> Self {
-        let n = cmp::min(self.len(), n);
+        let n = min(self.len(), n);
         let data = replace(self, &mut []);
         let (left, data) = data.split_at_mut(n);
         *self = data;
@@ -60,7 +59,7 @@ impl<'a, T> SplitOff for &'a mut [T] {
     /// Split the right `n` items from self and return them as a separate slice.
     fn split_off_right(&mut self, n: usize) -> Self {
         let len = self.len();
-        let n = cmp::min(len, n);
+        let n = min(len, n);
         let data = replace(self, &mut []);
         let (data, right) = data.split_at_mut(len - n);
         *self = data;
@@ -142,12 +141,10 @@ fn reverse_complement(seq: &mut [u8], table: &[u8; 256]) {
     reverse_complement_left_right(left, right, trailing_len, table);
 }
 
-fn run() -> io::Result<()> {
-    let stdin = File::open("/dev/stdin")?;
-    let size = stdin.metadata()?.len() as usize;
-    let mut input = BufReader::with_capacity(READ_SIZE, stdin);
-    let mut buf = Vec::with_capacity(size);
-
+fn run() -> Result<()> {
+    let stdin = stdin();
+    let mut input = stdin.lock();
+    let mut buf = Vec::with_capacity(READ_SIZE);
 
     let mut seqs = vec![];
     loop {
@@ -174,7 +171,7 @@ fn run() -> io::Result<()> {
     }
 
     // Print the result.
-    io::stdout().write_all(&buf)
+    stdout().write_all(&buf)
 }
 
 fn main() {
