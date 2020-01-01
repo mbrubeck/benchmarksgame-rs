@@ -138,46 +138,38 @@ fn reverse_complement(seq: &mut [u8], table: &[u8; 256]) {
     reverse_complement_left_right(left, right, trailing_len, table);
 }
 
-fn run() -> Result<()> {
+fn process_next(table: &[u8; 256]) -> Result<Vec<Vec<u8>>> {
     let stdin = stdin();
     let mut input = stdin.lock();
+    let mut buf = Vec::with_capacity(16 * 1024);
 
-    let mut seqs = vec![];
-    loop {
-        // Read the header line.
-        let mut header = Vec::new();
-        input.read_until(b'\n', &mut header)?;
+    // Read the header line.
+    input.read_until(b'\n', &mut buf)?;
+    let start = buf.len();
 
-        // Read sequence data.
-        let mut buf = Vec::with_capacity(16 * 1024);
-        input.read_until(b'>', &mut buf)?;
-        let end = buf.len() - 1;
-        if buf[end] == b'>' {
-            // Found the start of a new sequence.
-            buf.truncate(end);
-            seqs.push((header, buf));
-        } else {
-            // Reached the end of the input.
-            seqs.push((header, buf));
-            break
-        }
+    // Read sequence data.
+    input.read_until(b'>', &mut buf)?;
+    let end = buf.len();
+    drop(input);
+
+    if buf[end-1] == b'>' {
+        // Found the start of a new sequence.
+        let (_, results) = rayon::join(
+            || reverse_complement(&mut buf[start..end-1], &table),
+            || process_next(table));
+        let mut results = results?;
+        results.push(buf);
+        Ok(results)
+    } else {
+        // Reached the end of the file.
+        reverse_complement(&mut buf[start..end], &table);
+        Ok(vec![buf])
     }
+}
 
-    // Compute the reverse complements of each sequence.
-    let table = build_table();
-    for (_header, seq) in &mut seqs {
-        reverse_complement(seq, &table);
-    }
-
-    // Print the result.
-    let stdout = stdout();
-    let mut output = stdout.lock();
-    for (i, (header, seq)) in seqs.iter().enumerate() {
-        if i > 0 {
-            output.write_all(b">")?;
-        }
-        output.write_all(header)?;
-        output.write_all(seq)?;
+fn run() -> Result<()> {
+    for seq in process_next(&build_table())?.iter().rev() {
+        stdout().write_all(seq)?;
     }
     Ok(())
 }
